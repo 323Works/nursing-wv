@@ -1,0 +1,14 @@
+\set ON_ERROR_STOP on
+
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+GRANT CONNECT ON DATABASE nursing_wv TO nursing_runtime;
+GRANT USAGE ON SCHEMA public TO nursing_runtime;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO nursing_runtime;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO nursing_runtime;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA public
+    GRANT SELECT ON TABLES TO nursing_runtime;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA public
+    GRANT SELECT ON SEQUENCES TO nursing_runtime;
