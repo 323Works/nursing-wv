@@ -41,7 +41,7 @@ export default function Dashboard({ dashboardData, initialResult }: { dashboardD
   const previousPage = () => { const cursor = cursorHistory.at(-1) ?? null; setCursorHistory((history) => history.slice(0, -1)); setFilters({ ...filters, cursor }); };
 
   return <main>
-    <header className="site-header"><a href="https://323works.com" target="_blank" rel="noopener noreferrer"><Image src="/logo.png" width={42} height={42} alt="323 Works" priority/></a><div><h1>WV Nursing Licensing Data</h1><p>West Virginia RN Board public records · June 25, 2025 roster snapshot</p></div><button type="button" onClick={() => (document.getElementById("about-dialog") as HTMLDialogElement)?.showModal()}>About</button></header>
+    <header className="site-header"><a href="https://323works.com" target="_blank" rel="noopener noreferrer"><Image src="/appworks-portfolio-icon.png" width={42} height={42} alt="323 Works" priority/></a><div><h1>WV Nursing Licensing Data</h1><p>West Virginia RN Board public records · June 25, 2025 roster snapshot</p></div><button type="button" onClick={() => (document.getElementById("about-dialog") as HTMLDialogElement)?.showModal()}>About</button></header>
     <StatsCards stats={dashboardData.stats}/>
     <div className="credential-summary" aria-label="Credential breakdown">{dashboardData.credentials.map((item) => <span key={item.credential}><strong>{item.credential}</strong>{item.count.toLocaleString()}</span>)}</div>
     <div className="content"><FilterPanel filters={filters} options={dashboardData.credentials} onUpdate={update} onReset={() => changeFilters(DEFAULT_FILTERS)}/>{error && <div className="error-banner" role="alert">{error}</div>}</div>
