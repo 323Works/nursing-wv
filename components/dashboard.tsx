@@ -8,6 +8,8 @@ import FilterPanel from "./filter-panel";
 import Results from "./results";
 import StatsCards from "./stats-cards";
 
+const resultKey = (filters: LicenseFilters) => JSON.stringify(filters);
+
 export default function Dashboard({ dashboardData, initialResult }: { dashboardData: DashboardData; initialResult: LicenseResponse }) {
   const [filters, setFilters] = useState<LicenseFilters>(DEFAULT_FILTERS);
   const [result, setResult] = useState(initialResult);
@@ -16,26 +18,55 @@ export default function Dashboard({ dashboardData, initialResult }: { dashboardD
   const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
   const firstRender = useRef(true);
   const controller = useRef<AbortController | null>(null);
+  const prefetchController = useRef<AbortController | null>(null);
+  const debounceSearch = useRef(false);
+  const resultCache = useRef(new Map<string, LicenseResponse>([[resultKey(DEFAULT_FILTERS), initialResult]]));
+
+  const remember = useCallback((key: string, value: LicenseResponse) => {
+    const cache = resultCache.current;
+    cache.delete(key);
+    cache.set(key, value);
+    if (cache.size > 20) cache.delete(cache.keys().next().value!);
+  }, []);
+
+  const prefetchNext = useCallback((current: LicenseFilters, response: LicenseResponse) => {
+    prefetchController.current?.abort();
+    if (!response.next_cursor) return;
+    const next = { ...current, cursor: response.next_cursor };
+    const key = resultKey(next);
+    if (resultCache.current.has(key)) return;
+    const pending = new AbortController();
+    prefetchController.current = pending;
+    void fetch("/api/licensees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next), signal: pending.signal })
+      .then(async (res) => { if (res.ok) remember(key, await res.json() as LicenseResponse); })
+      .catch(() => { /* Prefetch is optional; foreground requests report errors. */ });
+  }, [remember]);
 
   const fetchResults = useCallback(async (next: LicenseFilters) => {
-    controller.current?.abort(); controller.current = new AbortController(); setLoading(true); setError(null);
+    controller.current?.abort(); prefetchController.current?.abort(); setError(null);
+    const key = resultKey(next);
+    const cached = resultCache.current.get(key);
+    if (cached) { setResult(cached); setLoading(false); prefetchNext(next, cached); return; }
+    const pending = new AbortController(); controller.current = pending; setLoading(true);
     try {
-      const response = await fetch("/api/licensees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next), signal: controller.current.signal });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load records"); setResult(body);
+      const response = await fetch("/api/licensees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next), signal: pending.signal });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || "Unable to load records");
+      remember(key, body); setResult(body); prefetchNext(next, body);
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setError(reason instanceof Error ? reason.message : "Unable to load records");
-    } finally { setLoading(false); }
-  }, []);
+    } finally { if (controller.current === pending) setLoading(false); }
+  }, [prefetchNext, remember]);
 
   useEffect(() => {
-    if (firstRender.current) { firstRender.current = false; return; }
-    const timer = window.setTimeout(() => void fetchResults(filters), 300);
-    return () => { window.clearTimeout(timer); controller.current?.abort(); };
-  }, [filters, fetchResults]);
+    if (firstRender.current) { firstRender.current = false; prefetchNext(filters, initialResult); return; }
+    const timer = window.setTimeout(() => void fetchResults(filters), debounceSearch.current ? 300 : 0);
+    debounceSearch.current = false;
+    return () => { window.clearTimeout(timer); controller.current?.abort(); prefetchController.current?.abort(); };
+  }, [filters, fetchResults, initialResult, prefetchNext]);
 
   const changeFilters = (next: LicenseFilters) => { setCursorHistory([]); setFilters(next); };
-  const update = (partial: Partial<LicenseFilters>) => changeFilters({ ...filters, ...partial, cursor: null });
+  const update = (partial: Partial<LicenseFilters>) => { debounceSearch.current = partial.search !== undefined; changeFilters({ ...filters, ...partial, cursor: null }); };
   const sort = (sortBy: SortBy) => changeFilters({ ...filters, sort_by: sortBy, sort_dir: filters.sort_by === sortBy && filters.sort_dir === "asc" ? "desc" : "asc", cursor: null });
   const nextPage = () => { if (!result.next_cursor) return; setCursorHistory((history) => [...history, filters.cursor]); setFilters({ ...filters, cursor: result.next_cursor }); };
   const previousPage = () => { const cursor = cursorHistory.at(-1) ?? null; setCursorHistory((history) => history.slice(0, -1)); setFilters({ ...filters, cursor }); };

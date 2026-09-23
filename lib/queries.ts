@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { query } from "./db";
 import { decodeCursor, encodeCursor } from "./filters";
 import { OFFICIAL_LOOKUP_URL } from "./constants";
@@ -64,16 +65,24 @@ export async function getDashboardData(): Promise<DashboardData> {
   };
 }
 
+const getFilteredStats = unstable_cache(async (
+  search: string, scope: LicenseFilters["scope"], credentials: LicenseFilters["credentials"], lapsed: LicenseFilters["lapsed"],
+) => {
+  const base = buildWhere({ search, scope, credentials, lapsed, sort_by: "name", sort_dir: "asc", cursor: null, limit: 50 }, false);
+  const rows = await query(`SELECT COUNT(*)::int AS count, COUNT(DISTINCT credential_code)::int AS credential_types,
+                  COUNT(*) FILTER (WHERE prescriptive_authority_lapsed)::int AS lapsed_authority
+             FROM nursing_licensees WHERE ${base.where}`, base.params);
+  const row = rows[0];
+  return { count: Number(row.count), credential_types: Number(row.credential_types), lapsed_authority: Number(row.lapsed_authority) };
+}, ["nursing-filtered-stats-v1"], { revalidate: 86_400 });
+
 export async function searchLicensees(filters: LicenseFilters): Promise<LicenseResponse> {
-  const base = buildWhere(filters, false);
   const paged = buildWhere(filters, true);
   const direction = filters.sort_dir === "asc" ? "ASC" : "DESC";
   const order = filters.sort_by === "license" ? `license_number ${direction}, id ${direction}` : `last_name ${direction}, first_name ${direction}, license_number ${direction}, id ${direction}`;
   const listParams = [...paged.params, filters.limit + 1];
-  const [statsRows, rows] = await Promise.all([
-    query(`SELECT COUNT(*)::int AS count, COUNT(DISTINCT credential_code)::int AS credential_types,
-                  COUNT(*) FILTER (WHERE prescriptive_authority_lapsed)::int AS lapsed_authority
-             FROM nursing_licensees WHERE ${base.where}`, base.params),
+  const [stats, rows] = await Promise.all([
+    getFilteredStats(filters.search, filters.scope, [...filters.credentials].sort(), filters.lapsed),
     query(`SELECT id, license_number, credential_code, first_name, last_name, COALESCE(middle_names, '') AS middle_names,
                   name_raw, prescriptive_authority_lapsed, prescriptive_authority_expiration_date, COALESCE(location, '') AS location
              FROM nursing_licensees WHERE ${paged.where} ORDER BY ${order} LIMIT $${listParams.length}`, listParams),
@@ -93,6 +102,5 @@ export async function searchLicensees(filters: LicenseFilters): Promise<LicenseR
   });
   const last = licensees.at(-1);
   const nextCursor = hasMore && last ? encodeCursor({ lastName: last.last_name, firstName: last.first_name, licenseNumber: last.license_number, id: last.id }) : null;
-  const stats = statsRows[0];
-  return { licensees, stats: { count: Number(stats.count), credential_types: Number(stats.credential_types), lapsed_authority: Number(stats.lapsed_authority) }, total_count: Number(stats.count), next_cursor: nextCursor };
+  return { licensees, stats, total_count: stats.count, next_cursor: nextCursor };
 }
